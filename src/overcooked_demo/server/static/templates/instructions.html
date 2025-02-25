@@ -5,7 +5,27 @@
     <meta name="viewport" content="width=device-width, initial-scale=1, shrink-to-fit=no">
 
     <!-- Bootstrap CSS -->
-    <link rel="stylesheet" href="https://stackpath.bootstrapcdn.com/bootstrap/4.3.1/css/bootstrap.min.css" integrity="sha384-ggOyR0iXCbMQv3Xipma34MD+dH/1fQ784/j6cY/iJTQUOhcWr7x9JvoRxT2MZw1T" crossorigin="anonymous">
+    <link rel="stylesheet"
+          href="https://stackpath.bootstrapcdn.com/bootstrap/4.3.1/css/bootstrap.min.css"
+          integrity="sha384-ggOyR0iXCbMQv3Xipma34MD+dH/1fQ784/j6cY/iJTQUOhcWrnQq4sF86dIHNDz0W1"
+          crossorigin="anonymous">
+
+    <title>Instructions</title>
+    <link rel="Favicon" href="static/favicon.ico" />
+
+    <!-- Some basic JS for popover/tooltip if needed -->
+    <script src="static/lib/jquery-min.js" type="text/javascript"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/popper.js/1.14.7/umd/popper.min.js"
+            integrity="sha384-UO2eT0CpHqdSJQ6hJty5KVphtPhzWj9WO1clHTMGa3JDZwrnQq4sF86dIHNDz0W1"
+            crossorigin="anonymous"></script>
+    <script src="https://stackpath.bootstrapcdn.com/bootstrap/4.3.1/js/bootstrap.min.js"
+            integrity="sha384-JjSmVgyd0p3pXB1rRibZUAYoIIy6OrQ6VrjIEaFf/nJGzIxFDsf4x0xIM+B07jRM"
+            crossorigin="anonymous"></script>
+
+    <!-- 
+      Some inline CSS for the table & images below;
+      You could alternatively move this to style.css if you prefer.
+    -->
     <style>
       img.center {
         display: block;
@@ -15,123 +35,88 @@
         border: 1px solid #ddd;
         text-align: left;
       }
-
       table {
         border-collapse: collapse;
         width: 100%;
       }
-
       th, td {
         padding: 15px;
       }
       tr:nth-child(even) {background-color: #f2f2f2;}
     </style>
-
-    <title>Instructions</title>
-    <link rel="Favicon" href="static/favicon.ico" />
-
-    <script src="static/lib/jquery-min.js" type="text/javascript"> </script>
-    <script src="https://cdnjs.cloudflare.com/ajax/libs/popper.js/1.14.7/umd/popper.min.js" integrity="sha384-UO2eT0CpHqdSJQ6hJty5KVphtPhzWj9WO1clHTMGa3JDZwrnQq4sF86dIHNDz0W1" crossorigin="anonymous"></script>
-    <script src="https://stackpath.bootstrapcdn.com/bootstrap/4.3.1/js/bootstrap.min.js" integrity="sha384-JjSmVgyd0p3pXB1rRibZUAYoIIy6OrQ6VrjIEaFf/nJGzIxFDsf4x0xIM+B07jRM" crossorigin="anonymous"></script>
   </head>
   <body>
-    <div class="container">
+    <div class="container mt-3">
+      <!-- Link back to the main game page -->
       <h4 class="text-center"><a href="./">Back to game</a></h4>
+
       <p>
-        Hello! In this task, you will be playing a
-        cooking game. You will play one of two chefs
+        Hello! In this task, you will be playing a cooking game. You will play one of two chefs
         in a restaurant that serves various soups.
       </p>
 
-      <br>
       <hr>
-      <br>
 
       <h3 class="text-center">Layouts</h3>
-      <p>
-        This is what one level of the game looks like:
-      </p>
+      <p>This is what one level of the game looks like:</p>
       <img class="center" src="static/images/training0.png" style="width:500px">
-      <p>
-        There are a number of objects in the game, labeled here:
-      </p>
+      <p>There are a number of objects in the game, labeled here:</p>
       <img class="center" src="static/images/training0-annotated.png" style="width:800px">
 
-      <br>
       <hr>
-      <br>
 
-      <h3 class="text-center">Movement and interactions</h3>
+      <h3 class="text-center">Movement and Interactions</h3>
       <img class="center" src="static/images/space-arrows.png" style="width:250px">
       <p>
-        You can move up, down, left, and right using
-        the <b>arrow keys</b>, and interact with objects
+        You can move up, down, left, and right using the <b>arrow keys</b>, and interact with objects
         using the <b>spacebar</b>.
       </p>
       <p>
-        You can interact with objects by facing them and pressing
-        <b>spacebar</b>. Here are some examples:
-        <ul>
-          <li>You can pick up ingredients (onions or tomatoes) by facing
-            the ingredient area and pressing <b>spacebar</b>.</li>
-          <li>If you are holding an ingredient, are facing an empty counter,
-            and press <b>spacebar</b>, you put the ingredient on the counter.</li>
-          <li>If you are holding an ingredient, are facing a pot that is not full,
-            and press <b>spacebar</b>, you will put the ingredient in the pot.</li>
-          <li>If you are facing a pot that is non-empty, are currently holding nothing, and 
-            and press <b>spacebar</b>, you will begin cooking a soup.</li>
-        </ul>
+        You can interact with objects by facing them and pressing <b>spacebar</b>. Examples:
+      </p>
+      <ul>
+        <li>Pick up ingredients by facing them and pressing space.</li>
+        <li>Place an ingredient on an empty counter by facing it and pressing space (while holding the ingredient).</li>
+        <li>Place ingredients in the pot, up to 3 total, by facing the pot and pressing space.</li>
+        <li>If the pot is non-empty and you are holding nothing, pressing space can start cooking the soup.</li>
+      </ul>
+      <p>
+        Also note that you <u><b>cannot occupy the same location</b></u> as your partner in the kitchen.
       </p>
 
-      <br>
-      <br>
-      <p>
-        Note that as you and your partner are moving around the kitchen
-        you <u><b>cannot occupy the same location</b></u>.
-      </p>
-      <br>
       <hr>
-      <br>
 
       <h3 class="text-center">Cooking</h3>
       <img class="center" src="static/images/soup.png" style="width:250px">
       <p>
-        Once an ingredient is in the pot, you can begin cooking a soup by pressing 
-        <b>spacebar</b> as noted above. You can place up to 3 ingredients in a pot 
-        before cooking. 
+        Once an ingredient is in the pot, press <b>spacebar</b> while facing the pot to begin cooking.
+        You can place up to three ingredients in a pot before cooking.
       </p>
       <p>
-        When a soup begins cooking, you'll notice a red number appear over the pot to 
-        denote the cook time. This number counts upward until the soup is done. Soup 
-        cook time is determined its ingredients; every onion add {{ layout_conf.onion_time }} and 
-        every tomato adds {{ layout_conf.tomato_time }} to the cook time.
+        A red number will appear over the pot to denote cook time. Soups are done once the cook time
+        is reached. Each onion adds {{ layout_conf.onion_time }} seconds to the cook time;
+        each tomato adds {{ layout_conf.tomato_time }} seconds.
       </p>
       <p>
-        Additionally, the base 
-        reward for any recipe is determined by its ingredients; each onion adds {{ layout_conf.onion_value }} 
-        points and each tomato adds {{ layout_conf.tomato_value }} points.
+        The base reward for any recipe is determined by its ingredients: each onion adds
+        {{ layout_conf.onion_value }} points and each tomato adds {{ layout_conf.tomato_value }} points.
       </p>
 
-      <br>
       <hr>
-      <br>
 
       <h3 class="text-center">Serving</h3>
       <img class="center" src="static/images/serving-counter.png" style="width:800px">
       <p>
-        Once the soup is in a bowl, you can serve it by bringing it to
-        a grey serving counter.
+        Once soup is in a bowl, you can serve it by bringing it to a grey serving counter.
       </p>
 
-      <br>
       <hr>
-      <br>
 
       <h3 class="text-center">Soups</h3>
       <p>
-        There are 9 possible soup recipes that can be created from combinations of tomatoes
-        and onions, each with its own icon. The recipe icons and the corresponding ingredients are
-        listed below
+        There are 9 possible soup recipes (combinations of tomatoes and onions).
+        Only up to 3 ingredients total. The table below shows each recipe icon, 
+        the base reward, and the total cook time.
       </p>
       <table>
         <tr>
@@ -144,69 +129,59 @@
           {% for num_onions in range(layout_conf.max_num_ingredients + 1) %}
             {% if num_tomatoes + num_onions > 0 and num_onions + num_tomatoes <= layout_conf.max_num_ingredients %}
               <tr>
-                <td>{{ num_onions ~ " Onion" if num_onions }} {{ num_tomatoes ~ " Tomato" if num_tomatoes }}</td>
-                <td><img src="{{ "static/assets/new_sprites/soup_done_tomato_" ~ num_tomatoes ~ "_onion_" ~ num_onions ~ ".png" }}" style="width:75px;background-color: #e6b453;"></td>
+                <td>
+                  {{ num_onions ~ " Onion" if num_onions }} 
+                  {{ num_tomatoes ~ " Tomato" if num_tomatoes }}
+                </td>
+                <td>
+                  <img src="{{ "static/assets/new_sprites/soup_done_tomato_" ~ num_tomatoes ~ "_onion_" ~ num_onions ~ ".png" }}"
+                       style="width:75px;background-color: #e6b453;">
+                </td>
                 <td>{{ layout_conf.onion_value * num_onions + layout_conf.tomato_value * num_tomatoes }}</td>
                 <td>{{ layout_conf.onion_time * num_onions + layout_conf.tomato_time * num_tomatoes }}</td>
               </tr>
             {% endif %}
           {% endfor %}
         {% endfor %}
-
       </table>
 
-      <br>
       <hr>
-      <br>
 
       <h3 class="text-center">All Orders</h3>
       <p>
-        While you are free to cook any 3-ingredient soup you like, only some are worth points. 
-        The <b>All Orders</b> list shows which recipes will recieve points. This is important, 
-        as any soup served not in this list will not count towards your score. The <b>All Orders</b>
-        list does not change throughout the duration of a level.
+        Only some soups are worth points. The <b>All Orders</b> list shows which recipes will give points.
+        Any soup served not in this list is worth 0 points. The <b>All Orders</b> list remains the same 
+        throughout the level.
       </p>
-      <p>To reiterate: <b>ANY SOUP COOKED THAT IS NOT IN ALL ORDERS WILL NOT BE WORTH POINTS</b></p>
+      <p><b>Any soup not in All Orders yields 0 points</b>.</p>
 
-      <br>
       <hr>
-      <br>
 
       <h3 class="text-center">Bonus Orders</h3>
       <p>
-        In addition to the list of available orders, there is also a list of <b>bonus orders</b>. Any 
-        soup from this list served will be worth its base reward times {{ layout_conf.order_bonus }}
+        <b>Bonus Orders</b> are a subset of All Orders. Any served soup on the bonus list is worth
+        its base reward times {{ layout_conf.order_bonus }}.
       </p>
 
-      <br>
       <hr>
-      <br>
 
       <h3 class="text-center">Score</h3>
       <p>
-        When a soup is served at the serving counter, points could potentially be added to your score.
-        The base reward for any recipe is determined by its ingredients; each onion adds {{ layout_conf.onion_value }} 
-        points and each tomato adds {{ layout_conf.tomato_value }} points. Note that serving a soup in the <b>Bonus Orders</b>
-        multiplies the base soup score by {{ layout_conf.order_bonus }}. Additionally, serving a soup not in the
-        <b>All Orders</b> list results in zero points not matter what!
+        Serving a soup at the serving counter may add points to your score.
+        The base reward is the sum of onion and tomato values as mentioned.
+        If a soup is in <b>Bonus Orders</b>, its final reward is multiplied by {{ layout_conf.order_bonus }}.
+        If it’s not in <b>All Orders</b>, it yields 0 points no matter what.
       </p>
 
-      <br>
       <hr>
-      <br>
 
       <h3 class="text-center">Goal</h3>
       <img class="center" src="static/images/info-panel.png" style="width:500px">
       <p>
-        Your goal in this task is to serve as many of the orders as you can
-        before each level ends.
-        The current all orders, bonus orders, time, and score are all displayed 
+        Your goal is to serve as many valid orders as possible before time runs out.
+        The <b>All Orders</b>, <b>Bonus Orders</b>, <b>Time Left</b>, and <b>Score</b> all appear
         in an info panel below the layout.
       </p>
-
-      <br>
-      <hr>
-      <br>
     </div>
   </body>
 </html>
