@@ -1,10 +1,27 @@
-// Persistent network connection that will be used to transmit real-time data
+// -----------------------------------------------------------------------------
+// tutorial.js
+// -----------------------------------------------------------------------------
+// Visit index.js first since some of the functions are similar/same and therefore
+// not as extensively commented.
+//
+// This file drives the "tutorial" flow for new users (on tutorial.html).
+// It uses Socket.IO to run a special "tutorial" game mode on the server,
+// where the user goes through multiple "phases"/"mechanics."
+//
+// The client displays instructions/hints and transitions from one phase
+// to the next when the server calls "reset_game." Each phase introduces
+// a different Overcooked mechanic.
+//
+// -----------------------------------------------------------------------------
+
+// Create a persistent Socket.IO connection.
 var socket = io();
 
-
-
+// Parse a config from the HTML (#config) that defines tutorial parameters
 var config;
 
+// tutorial_instructions() / tutorial_hints() are functions that return arrays of
+// text instructions/hints for each phase.
 var tutorial_instructions = () => [
     `
     <p>Mechanic: <b>Delivery</b></p>
@@ -77,11 +94,16 @@ var tutorial_hints = () => [
 
 var curr_tutorial_phase;
 
-// Read in game config provided by server
+// Read in game #config provided by server
 $(function() {
+    // Load the JSON config from #config
     config = JSON.parse($('#config').text());
+
+    // tutorial_instructions/hints are defined as arrays of HTML paragraphs
     tutorial_instructions = tutorial_instructions();
     tutorial_hints = tutorial_hints();
+
+    // Show the "quit" button
     $('#quit').show();
 });
 
@@ -89,6 +111,7 @@ $(function() {
  * Button click event handlers *
  * * * * * * * * * * * * * * * */
 
+// "Try Again" button restarts the tutorial by re-joining the tutorial game
 $(function() {
     $('#try-again').click(function () {
         data = {
@@ -100,6 +123,7 @@ $(function() {
     });
 });
 
+// "Show Hint" toggles display of the hint text
 $(function() {
     $('#show-hint').click(function() {
         let text = $(this).text();
@@ -109,6 +133,8 @@ $(function() {
     });
 });
 
+
+// "Quit" button leaves the tutorial and returns user to main page
 $(function() {
     $('#quit').click(function() {
         socket.emit("leave", {});
@@ -117,6 +143,7 @@ $(function() {
     });
 });
 
+// "Finish" button also ends the tutorial, returning user to main page
 $(function() {
     $('#finish').click(function() {
         $('finish').attr("disable", true);
@@ -126,12 +153,12 @@ $(function() {
 
 
 
-/* * * * * * * * * * * * * 
- * Socket event handlers *
- * * * * * * * * * * * * */
-
+/* -----------------------------------------------------------------------------
+ * Socket event handlers
+ * -----------------------------------------------------------------------------
+ */
 socket.on('creation_failed', function(data) {
-    // Tell user what went wrong
+    // If the server fails to make a tutorial game, show an error
     let err = data['error']
     $("#overcooked").empty();
     $('#overcooked').append(`<h4>Sorry, tutorial creation code failed with error: ${JSON.stringify(err)}</>`);
@@ -140,41 +167,61 @@ socket.on('creation_failed', function(data) {
 });
 
 socket.on('start_game', function(data) {
+    // Begin tutorial at phase 0
     curr_tutorial_phase = 0;
+
+
     graphics_config = {
         container_id : "overcooked",
         start_info : data.start_info
     };
+
+    // Clear existing text/UI from last run
     $("#overcooked").empty();
     $('#game-over').hide();
     $('#try-again').hide();
     $('#try-again').attr('disabled', true)
     $('#hint-wrapper').hide();
     $('#show-hint').text('Show Hint');
+
+    // Update tutorial title to reflect phase
     $('#game-title').text(`Tutorial in Progress, Phase ${curr_tutorial_phase}/${tutorial_instructions.length}`);
     $('#game-title').show();
+
+    // Insert the instructions/hints for phase 0
     $('#tutorial-instructions').append(tutorial_instructions[curr_tutorial_phase]);
     $('#instructions-wrapper').show();
     $('#hint').append(tutorial_hints[curr_tutorial_phase]);
+
+    // Start the Overcooked environment
     enable_key_listener();
     graphics_start(graphics_config);
 });
 
 socket.on('reset_game', function(data) {
+    // The server signals we finished a phase and are moving to next
     curr_tutorial_phase++;
     graphics_end();
     disable_key_listener();
+
     $("#overcooked").empty();
     $('#tutorial-instructions').empty();
     $('#hint').empty();
+
+    // Insert the new phase insructions
     $("#tutorial-instructions").append(tutorial_instructions[curr_tutorial_phase]);
     $("#hint").append(tutorial_hints[curr_tutorial_phase]);
+
+    // Update the header
     $('#game-title').text(`Tutorial in Progress, Phase ${curr_tutorial_phase + 1}/${tutorial_instructions.length}`);
     
+    // If the hint was open ("Hide Hint"), we close it for the new phase
     let button_pressed = $('#show-hint').text() === 'Hide Hint';
     if (button_pressed) {
         $('#show-hint').click();
     }
+
+    // Start up the new environment state
     graphics_config = {
         container_id : "overcooked",
         start_info : data.state
@@ -184,14 +231,16 @@ socket.on('reset_game', function(data) {
 });
 
 socket.on('state_pong', function(data) {
-    // Draw state update
+    // Update the tutorial’s Overcooked environment with a new state
     drawState(data['state']);
 });
 
 socket.on('end_game', function(data) {
-    // Hide game data and display game-over html
+    // Hide game data and display game-over title - tutorial ended
     graphics_end();
     disable_key_listener();
+
+    // Hide tutorial UI
     $('#game-title').hide();
     $('#instructions-wrapper').hide();
     $('#hint-wrapper').hide();
@@ -209,39 +258,36 @@ socket.on('end_game', function(data) {
         window.top.postMessage({ name : "tutorial-done" }, "*");
     }
 
+    // Show the "Finish" button so user can go back
     $('#finish').show();
 });
 
 
-/* * * * * * * * * * * * * * 
- * Game Key Event Listener *
- * * * * * * * * * * * * * */
-
+/* -----------------------------------------------------------------------------
+ * Key Event Listener
+ * -----------------------------------------------------------------------------
+ *
+ */
 function enable_key_listener() {
     $(document).on('keydown', function(e) {
-        let action = 'STAY'
+        let action = 'STAY';
         switch (e.which) {
-            case 37: // left
+            case 37: // left arrow
                 action = 'LEFT';
                 break;
-
-            case 38: // up
+            case 38: // up arrow
                 action = 'UP';
                 break;
-
-            case 39: // right
+            case 39: // right arrow
                 action = 'RIGHT';
                 break;
-
-            case 40: // down
+            case 40: // down arrow
                 action = 'DOWN';
                 break;
-
-            case 32: //space
+            case 32: // space
                 action = 'SPACE';
                 break;
-
-            default: // exit this handler for other keys
+            default:
                 return; 
         }
         e.preventDefault();
@@ -253,26 +299,25 @@ function disable_key_listener() {
     $(document).off('keydown');
 };
 
-/* * * * * * * * * * * * 
- * Game Initialization *
- * * * * * * * * * * * */
+/* -----------------------------------------------------------------------------
+ * Game Initialisation
+ * -----------------------------------------------------------------------------
+ * On socket connect, automatically attempt to join "tutorial".
+ */
 
 socket.on("connect", function() {
-    // Config for this specific game
     let data = {
         "params" : config['tutorialParams'],
         "game_name" : "tutorial"
     };
-
-    // create (or join if it exists) new game
     socket.emit("join", data);
 });
 
 
-/* * * * * * * * * * *
- * Utility Functions *
- * * * * * * * * * * */
-
+/* -----------------------------------------------------------------------------
+ * Utility Functions
+ * -----------------------------------------------------------------------------
+ */
 var arrToJSON = function(arr) {
     let retval = {}
     for (let i = 0; i < arr.length; i++) {
