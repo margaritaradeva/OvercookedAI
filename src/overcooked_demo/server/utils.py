@@ -1,11 +1,14 @@
 import os
 from threading import Lock
 
-# this is the mounted volume
+# A constant for the data directory used by Docker
 DOCKER_VOLUME = "/app/data"
 
 
 class ThreadSafeSet(set):
+    """
+    A set with a Lock so that multiple threads can safely add/remove without concurrency issues.
+    """
     def __init__(self, *args, **kwargs):
         super(ThreadSafeSet, self).__init__(*args, **kwargs)
         self.lock = Lock()
@@ -38,6 +41,9 @@ class ThreadSafeSet(set):
 
 
 class ThreadSafeDict(dict):
+    """
+    A dictionary with a Lock for concurrency safety.
+    """
     def __init__(self, *args, **kwargs):
         super(ThreadSafeDict, self).__init__(*args, **kwargs)
         self.lock = Lock()
@@ -68,11 +74,9 @@ class ThreadSafeDict(dict):
 
 def create_dirs(config: dict, cur_layout: str):
     """
-    config has 3 keys:
-     {"time": datetime.today().strftime("%Y-%m-%d_%H-%M-%S"),
-      "type": gameType/a str of either "HH","HA","AH","AA",
-      "layout": a layout string}
-    We group the data by layout/type/time
+    Utility for OvercookedGame data collection:
+      - We build a directory path: DOCKER_VOLUME/cur_layout/[old|new]_dynamics/type/time/
+      - e.g. /app/data/you_shall_not_pass/New/HA/2025-02-27_18-33-12
     """
     path = os.path.join(
         DOCKER_VOLUME,
