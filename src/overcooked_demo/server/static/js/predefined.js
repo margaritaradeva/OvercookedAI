@@ -1,6 +1,8 @@
 // -----------------------------------------------------------------------------
 // predefined.js
 // -----------------------------------------------------------------------------
+// Visit index.js first since some of the functions are similar/same and therefore
+// not as extensively commented.
 //
 // This file is used for the "predefined.html" page, which runs a series of
 // "predefined" Overcooked layouts back-to-back. It handles waiting rooms,
@@ -181,53 +183,50 @@ socket.on('end_lobby', function() {
 })
 
 
-/* * * * * * * * * * * * * * 
- * Game Key Event Listener *
- * * * * * * * * * * * * * */
-
+/* -----------------------------------------------------------------------------
+ * Keyboard event listeners
+ * -----------------------------------------------------------------------------
+ * Similar to index.js->watch arrow keys + space to send "action" to server.
+ */
 function enable_key_listener() {
     $(document).on('keydown', function(e) {
-        let action = 'STAY'
+        let action = 'STAY';
         switch (e.which) {
             case 37: // left
                 action = 'LEFT';
                 break;
-
             case 38: // up
                 action = 'UP';
                 break;
-
             case 39: // right
                 action = 'RIGHT';
                 break;
-
             case 40: // down
                 action = 'DOWN';
                 break;
-
-            case 32: //space
+            case 32: // space
                 action = 'SPACE';
                 break;
-
-            default: // exit this handler for other keys
+            default:
                 return; 
         }
         e.preventDefault();
         socket.emit('action', { 'action' : action });
     });
-};
+}
 
 function disable_key_listener() {
     $(document).off('keydown');
-};
+}
 
-
-/* * * * * * * * * * * * 
- * Game Initialization *
- * * * * * * * * * * * */
-
+/* -----------------------------------------------------------------------------
+ * Game Initialisation
+ * -----------------------------------------------------------------------------
+ * On "connect", read our config from the page (#config), then automatically
+ * attempt to join the experiment’s game.
+ */
 socket.on("connect", function() {
-    // set configuration variables
+    // Load the config object from the hidden div
     set_config();
 
     // Config for this specific game
@@ -243,10 +242,12 @@ socket.on("connect", function() {
 });
 
 
-/* * * * * * * * * * *
- * Utility Functions *
- * * * * * * * * * * */
+/* -----------------------------------------------------------------------------
+ * Utility Functions
+ * -----------------------------------------------------------------------------
+ */
 
+// Convert an array from jQuery .serializeArray() to a JSON object
 var arrToJSON = function(arr) {
     let retval = {}
     for (let i = 0; i < arr.length; i++) {
@@ -259,5 +260,6 @@ var arrToJSON = function(arr) {
 };
 
 var set_config = function() {
+    // Populate the #config div
     config = JSON.parse($("#config").text());
 }
