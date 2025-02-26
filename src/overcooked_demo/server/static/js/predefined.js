@@ -1,24 +1,42 @@
-// This is the javascript that defines transitions and interactions in the predefined.html page
-// Persistent network connection that will be used to transmit real-time data
+// -----------------------------------------------------------------------------
+// predefined.js
+// -----------------------------------------------------------------------------
+//
+// This file is used for the "predefined.html" page, which runs a series of
+// "predefined" Overcooked layouts back-to-back. It handles waiting rooms,
+// timeouts, and transitions from one layout to the next.
+//
+// Like index.js, it uses Socket.IO to talk to the server. The server
+// coordinates when each new layout starts, sends state updates, etc.
+//
+// -----------------------------------------------------------------------------
+
+// Create a persistent Socket.IO connection.
 var socket = io();
 
+// A global config object that will parsed from the page.
 var config;
+
+// Example default experiment params (possibly overridden by server config).
 var experimentParams = {
     layouts : ["cramped_room", "counter_circuit"],
-    gameTime : 10,
+    gameTime : 30,
     playerZero : "DummyAI"
 };
 
+// How long to wait in lobby before giving up
 var lobbyWaitTime = 300000;
 
-/* * * * * * * * * * * * * 
- * Socket event handlers *
- * * * * * * * * * * * * */
-
+// Interval/timeout IDs so they can be cleared when needed
 window.intervalID = -1;
 window.ellipses = -1;
 window.lobbyTimeout = -1;
 
+/* -----------------------------------------------------------------------------
+ * One click handler: if the user manually leaves the lobby, go back to "/"
+which is index.html page.
+ * -----------------------------------------------------------------------------
+ */
 $(function() {
     $('#leave-btn').click(function () {
         socket.emit("leave",{});
@@ -26,12 +44,17 @@ $(function() {
     });
 });
 
-
+/* -----------------------------------------------------------------------------
+ * Socket event handlers
+ * -----------------------------------------------------------------------------
+ */
 socket.on('waiting', function(data) {
     // Show game lobby
     $('#game-over').hide();
     $("#overcooked").empty();
     $('#lobby').show();
+
+    // If not currently in a game, keep trying to join
     if (!data.in_game) {
         if (window.intervalID === -1) {
             // Occassionally ping server to try and join
@@ -40,12 +63,15 @@ socket.on('waiting', function(data) {
             }, 1000);
         }
     }
+
     if (window.lobbyTimeout === -1) {
         // Waiting animation
         window.ellipses = setInterval(function () {
             var e = $("#ellipses").text();
             $("#ellipses").text(".".repeat((e.length + 1) % 10));
         }, 500);
+
+        
         // Timeout to leave lobby if no-one is found
         window.lobbyTimeout = setTimeout(function() {
             socket.emit('leave', {});
@@ -85,15 +111,22 @@ socket.on('start_game', function(data) {
     $('#lobby').hide();
     $('#reset-game').hide();
     $('#game-title').show();
+
+
     enable_key_listener();
     graphics_start(graphics_config);
 });
 
 socket.on('reset_game', function(data) {
+    // Called if the server wants to reset to a new layout mid-experiment
     graphics_end();
     disable_key_listener();
+
+
     $("#overcooked").empty();
     $("#reset-game").show();
+
+
     setTimeout(function() {
         $("#reset-game").hide();
         graphics_config = {
@@ -109,12 +142,12 @@ socket.on('reset_game', function(data) {
 });
 
 socket.on('state_pong', function(data) {
-    // Draw state update
+    // Redraw the environment with the new game state
     drawState(data['state']);
 });
 
 socket.on('end_game', function(data) {
-    // Hide game data and display game-over html
+    // Hide game data and display game-over title
     graphics_end();
     disable_key_listener();
     $('#game-title').hide();
