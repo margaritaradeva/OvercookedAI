@@ -10,36 +10,38 @@ from time import time
 import ray
 from utils import DOCKER_VOLUME, create_dirs
 
-from human_aware_rl.rllib.rllib import load_agent
+# We import classes / functions from Overcooked library
+from human_aware_rl.rllib.rllib import load_agent # REMOVE LATER
 from overcooked_ai_py.mdp.actions import Action, Direction
-from overcooked_ai_py.mdp.overcooked_env import OvercookedEnv
+from overcooked_ai_py.mdp.overcooked_env import OvercookedEnv # MAYBE
 from overcooked_ai_py.mdp.overcooked_mdp import OvercookedGridworld
 from overcooked_ai_py.planning.planners import (
     NO_COUNTERS_PARAMS,
     MotionPlanner,
-)
+) # REMOVE LATER
 
-# Relative path to where all static pre-trained agents are stored on server
-AGENT_DIR = None
-
-# Maximum allowable game time (in seconds)
-MAX_GAME_TIME = None
+# Global module variables that get set by _configure() in app.py
+AGENT_DIR = None      # Where to find saved/pickled AI policies
+MAX_GAME_TIME = None  # The maximum time a game can run
 
 
 def _configure(max_game_time, agent_dir):
+    """
+    Called once by app.py to set references to the agent directory and max game time.
+    """
     global AGENT_DIR, MAX_GAME_TIME
     MAX_GAME_TIME = max_game_time
     AGENT_DIR = agent_dir
 
 
 def fix_bc_path(path):
-    """
-    Loading a PPO agent trained with a BC agent requires loading the BC model as well when restoring the trainer, even though the BC model is not used in game
-    For now the solution is to include the saved BC model and fix the relative path to the model in the config.pkl file
+    """"
+    A hacky fix for RLlib agents that also used BC during training. 
+    RLlib requires the BC model path to be correct inside config.pkl.
+    We rewrite the path so the BC model can be found properly.
     """
 
     import dill
-
     # the path is the agents/Rllib.*/agent directory
     agent_path = os.path.dirname(path)
     with open(os.path.join(agent_path, "config.pkl"), "rb") as f:
@@ -51,27 +53,29 @@ def fix_bc_path(path):
     with open(os.path.join(agent_path, "config.pkl"), "wb") as f:
         dill.dump(data, f)
 
-
+########################################
+# Base Game Abstract Class
+########################################
 class Game(ABC):
 
     """
-    Class representing a game object. Coordinates the simultaneous actions of arbitrary
-    number of players. Override this base class in order to use.
+    Abstract base class for "games" that can be integrated with the server logic. 
+    Key points:
+      - The server calls game.tick() repeatedly to apply any queued actions (from users).
+      - We have a list of players, plus an optional list of spectators.
+      - Subclasses override is_full(), apply_action(...), is_finished(), etc.
+      - We store pending_actions in a queue so we can apply them during tick().
+      - We also have a lock so that we can do thread-safe modifications.
 
-    Players can post actions to a `pending_actions` queue, and driver code can call `tick` to apply these actions.
-
-
-    It should be noted that most operations in this class are not on their own thread safe. Thus, client code should
-    acquire `self.lock` before making any modifications to the instance.
-
-    One important exception to the above rule is `enqueue_actions` which is thread safe out of the box
+    The nested class Status has some possible states:
+      - DONE = "done" => The game is finished
+      - ACTIVE = "active" => The game is currently ongoing
+      - RESET = "reset" => The game needs to be reset (like in tutorial phases)
+      - INACTIVE = "inactive" => The game was canceled or forcibly ended
+      - ERROR = "error" => Some unhandled error
     """
 
-    # Possible TODO: create a static list of IDs used by the class so far to verify id uniqueness
-    # This would need to be serialized, however, which might cause too great a performance hit to
-    # be worth it
-
-    EMPTY = "EMPTY"
+    EMPTY = "EMPTY" # a placeholder for player slots that aren't filled
 
     class Status:
         DONE = "done"
@@ -81,14 +85,12 @@ class Game(ABC):
         ERROR = "error"
 
     def __init__(self, *args, **kwargs):
-        """
-        players (list): List of IDs of players currently in the game
-        spectators (set): Collection of IDs of players that are not allowed to enqueue actions but are currently watching the game
-        id (int):   Unique identifier for this game
-        pending_actions List[(Queue)]: Buffer of (player_id, action) pairs have submitted that haven't been commited yet
-        lock (Lock):    Used to serialize updates to the game state
-        is_active(bool): Whether the game is currently being played or not
-        """
+        # players: a list of player IDs or "EMPTY"
+        # spectators: a set of IDs
+        # pending_actions: a list of Queues, each queue for one player's actions
+        # id: a unique ID for the game
+        # lock: ensures thread-safe updates
+        # _is_active: whether the game is currently running
         self.players = []
         self.spectators = set()
         self.pending_actions = []
@@ -140,9 +142,10 @@ class Game(ABC):
 
     def apply_actions(self):
         """
-        Updates the game state by applying each of the pending actions in the buffer. Is called by the tick method. Subclasses
-        should override this method if joint actions are necessary. If actions can be serialized, overriding `apply_action` is
-        preferred
+        Updates the game state by applying each of the pending actions in the buffer. 
+        Is called by the tick method. Subclasses should override this method if joint
+        actions are necessary. If actions can be serialized, overriding `apply_action` is
+        preferred.
         """
         for i in range(len(self.players)):
             try:
@@ -154,15 +157,13 @@ class Game(ABC):
 
     def activate(self):
         """
-        Activates the game to let server know real-time updates should start. Provides little functionality but useful as
-        a check for debugging
+        Mark the game as active. The server's background 'play_game' loop starts calling .tick().
         """
         self._is_active = True
 
     def deactivate(self):
         """
-        Deactives the game such that subsequent calls to `tick` will be no-ops. Used to handle case where game ends but
-        there is still a buffer of client pings to handle
+        Mark the game as inactive. Possibly because the game ended or the user left.
         """
         self._is_active = False
 
@@ -190,7 +191,6 @@ class Game(ABC):
         the game state, offering an additional level of safety and thread security.
 
         One can think of "enqueue_action" like calling "git add" and "tick" like calling "git commit"
-
         Subclasses should try to override `apply_actions` if possible. Only override this method if necessary
         """
         if not self.is_active:
@@ -222,7 +222,7 @@ class Game(ABC):
 
     def get_state(self):
         """
-        Return a JSON compatible serialized state of the game. Note that this should be as minimalistic as possible
+        Return a JSON compatible serialised state of the game. Note that this should be as minimalistic as possible
         as the size of the game state will be the most important factor in game performance. This is sent to the client
         every frame update.
         """
@@ -230,7 +230,7 @@ class Game(ABC):
 
     def to_json(self):
         """
-        Return a JSON compatible serialized state of the game. Contains all information about the game, does not need to
+        Return a JSON compatible serialised state of the game. Contains all information about the game, does not need to
         be minimalistic. This is sent to the client only once, upon game creation
         """
         return self.get_state()
@@ -243,7 +243,9 @@ class Game(ABC):
 
     def add_player(self, player_id, idx=None, buff_size=-1):
         """
-        Add player_id to the game
+        Add a new player (by ID). If idx is specified, we put them in that slot.
+        Otherwise, we append or fill an EMPTY slot.
+        buff_size is the max queue size for that player's action queue.
         """
         if self.is_full():
             raise ValueError("Cannot add players to full game")
@@ -254,6 +256,7 @@ class Game(ABC):
         elif not idx:
             idx = len(self.players)
 
+        # If the idx is out of range, we pad with empties
         padding = max(0, idx - len(self.players) + 1)
         for _ in range(padding):
             self.players.append(self.EMPTY)
@@ -272,7 +275,8 @@ class Game(ABC):
 
     def remove_player(self, player_id):
         """
-        Remove player_id from the game
+        Remove the given user from players (replace with EMPTY).
+        Return True if removal happened, False if they weren’t found.
         """
         try:
             idx = self.players.index(player_id)
@@ -285,7 +289,7 @@ class Game(ABC):
 
     def remove_spectator(self, spectator_id):
         """
-        Removes spectator_id if they are in list of spectators. Returns True if spectator successfully removed, False otherwise
+        Remove from spectators if present.
         """
         try:
             self.spectators.remove(spectator_id)
@@ -305,6 +309,7 @@ class Game(ABC):
 
     @property
     def num_players(self):
+        # Count how many are non-EMPTY -> num of players
         return len([player for player in self.players if player != self.EMPTY])
 
     def get_data(self):
@@ -314,73 +319,9 @@ class Game(ABC):
         return {}
 
 
-class DummyGame(Game):
-
-    """
-    Standin class used to test basic server logic
-    """
-
-    def __init__(self, **kwargs):
-        super(DummyGame, self).__init__(**kwargs)
-        self.counter = 0
-
-    def is_full(self):
-        return self.num_players == 2
-
-    def apply_action(self, idx, action):
-        pass
-
-    def apply_actions(self):
-        self.counter += 1
-
-    def is_finished(self):
-        return self.counter >= 100
-
-    def get_state(self):
-        state = super(DummyGame, self).get_state()
-        state["count"] = self.counter
-        return state
-
-
-class DummyInteractiveGame(Game):
-
-    """
-    Standing class used to test interactive components of the server logic
-    """
-
-    def __init__(self, **kwargs):
-        super(DummyInteractiveGame, self).__init__(**kwargs)
-        self.max_players = int(
-            kwargs.get("playerZero", "human") == "human"
-        ) + int(kwargs.get("playerOne", "human") == "human")
-        self.max_count = kwargs.get("max_count", 30)
-        self.counter = 0
-        self.counts = [0] * self.max_players
-
-    def is_full(self):
-        return self.num_players == self.max_players
-
-    def is_finished(self):
-        return max(self.counts) >= self.max_count
-
-    def apply_action(self, player_idx, action):
-        if action.upper() == Direction.NORTH:
-            self.counts[player_idx] += 1
-        if action.upper() == Direction.SOUTH:
-            self.counts[player_idx] -= 1
-
-    def apply_actions(self):
-        super(DummyInteractiveGame, self).apply_actions()
-        self.counter += 1
-
-    def get_state(self):
-        state = super(DummyInteractiveGame, self).get_state()
-        state["count"] = self.counter
-        for i in range(self.num_players):
-            state["player_{}_count".format(i)] = self.counts[i]
-        return state
-
-
+########################
+# OvercookedGame Class #
+########################
 class OvercookedGame(Game):
     """
     Class for bridging the gap between Overcooked_Env and the Game interface
@@ -449,6 +390,8 @@ class OvercookedGame(Game):
         if randomized:
             random.shuffle(self.layouts)
 
+        # If the user picks an AI (like "StayAI" or "rllib..."), we create a "player_id" of that name 
+        # and store a policy in self.npc_policies
         if playerZero != "human":
             player_zero_id = playerZero + "_0"
             self.add_player(player_zero_id, idx=0, buff_size=1, is_human=False)
@@ -456,7 +399,6 @@ class OvercookedGame(Game):
                 playerZero, idx=0
             )
             self.npc_state_queues[player_zero_id] = LifoQueue()
-
         if playerOne != "human":
             player_one_id = playerOne + "_1"
             self.add_player(player_one_id, idx=1, buff_size=1, is_human=False)
@@ -464,11 +406,12 @@ class OvercookedGame(Game):
                 playerOne, idx=1
             )
             self.npc_state_queues[player_one_id] = LifoQueue()
-        # Always kill ray after loading agent, otherwise, ray will crash once process exits
-        # Only kill ray after loading both agents to avoid having to restart ray during loading
+        
+        # If we used Ray to load an RLlib agent, we shut it down after loading
         if ray.is_initialized():
             ray.shutdown()
 
+        # If dataCollection=on, we store the trajectory for eventual saving
         if kwargs["dataCollection"]:
             self.write_data = True
             self.write_config = kwargs["collection_config"]
@@ -478,9 +421,12 @@ class OvercookedGame(Game):
         self.trajectory = []
 
     def _curr_game_over(self):
+        # True if we've exceeded the max_time
         return time() - self.start_time >= self.max_time
 
     def needs_reset(self):
+        # If time is up for the *current layout* but we still have more layouts, 
+        # we might want to go to the next layout
         return self._curr_game_over() and not self.is_finished()
 
     def add_player(self, player_id, idx=None, buff_size=-1, is_human=True):
@@ -503,6 +449,11 @@ class OvercookedGame(Game):
                 raise ValueError("Inconsistent state")
 
     def npc_policy_consumer(self, policy_id):
+        """
+        Runs in a background thread for each AI. It blocks on npc_state_queues[policy_id].get(),
+        then calls policy.action(state).
+        We then do OvercookedGame.enqueue_action(...) to push the chosen action into the game’s queue.
+        """
         queue = self.npc_state_queues[policy_id]
         policy = self.npc_policies[policy_id]
         while self._is_active:
@@ -514,13 +465,12 @@ class OvercookedGame(Game):
         return self.num_players >= self.max_players
 
     def is_finished(self):
+        # If we have no more layouts OR time is up => finished
         val = not self.layouts and self._curr_game_over()
         return val
 
     def is_empty(self):
-        """
-        Game is considered safe to scrap if there are no active players or if there are no humans (spectating or playing)
-        """
+        # If no players + no spectators => can be safely cleaned up
         return (
             super(OvercookedGame, self).is_empty()
             or not self.spectators
@@ -534,6 +484,7 @@ class OvercookedGame(Game):
         return super(OvercookedGame, self).is_ready() and not self.is_empty()
 
     def apply_action(self, player_id, action):
+        # We do nothing here; real logic is in apply_actions() because Overcooked uses joint actions.
         pass
 
     def apply_actions(self):
@@ -573,6 +524,7 @@ class OvercookedGame(Game):
         curr_reward = sum(info["sparse_reward_by_agent"])
         self.score += curr_reward
 
+        # Record a step in self.trajectory if dataCollection=on
         transition = {
             "state": json.dumps(prev_state.to_dict()),
             "joint_action": json.dumps(joint_action),
@@ -596,6 +548,7 @@ class OvercookedGame(Game):
         return prev_state, joint_action, info
 
     def enqueue_action(self, player_id, action):
+        # Convert string from user ("UP", "LEFT", "SPACE") to Overcooked Action
         overcooked_action = self.action_to_overcooked_action[action]
         super(OvercookedGame, self).enqueue_action(
             player_id, overcooked_action
@@ -608,16 +561,19 @@ class OvercookedGame(Game):
             self.start_time += self.reset_timeout / 1000
 
     def tick(self):
+        # On each frame, increment self.curr_tick, do normal logic from parent
         self.curr_tick += 1
         return super(OvercookedGame, self).tick()
 
     def activate(self):
+        # Called once the game is about to start
         super(OvercookedGame, self).activate()
 
         # Sanity check at start of each game
         if not self.npc_players.union(self.human_players) == set(self.players):
             raise ValueError("Inconsistent State")
 
+        # We pick the last layout from self.layouts
         self.curr_layout = self.layouts.pop()
         self.mdp = OvercookedGridworld.from_layout_name(
             self.curr_layout, **self.mdp_params
@@ -631,10 +587,13 @@ class OvercookedGame(Game):
             self.phi = self.mdp.potential_function(
                 self.state, self.mp, gamma=0.99
             )
+
         self.start_time = time()
         self.curr_tick = 0
         self.score = 0
         self.threads = []
+
+        # For each AI, reset it and start a thread that calls npc_policy_consumer(...)
         for npc_policy in self.npc_policies:
             self.npc_policies[npc_policy].reset()
             self.npc_state_queues[npc_policy].put(self.state)
@@ -644,7 +603,7 @@ class OvercookedGame(Game):
 
     def deactivate(self):
         super(OvercookedGame, self).deactivate()
-        # Ensure the background consumers do not hang
+        # Force the AI threads to not block
         for npc_policy in self.npc_policies:
             self.npc_state_queues[npc_policy].put(self.state)
 
@@ -656,6 +615,7 @@ class OvercookedGame(Game):
         self.clear_pending_actions()
 
     def get_state(self):
+        # This is what we send to the client on each 'state_pong'
         state_dict = {}
         state_dict["potential"] = self.phi if self.show_potential else None
         state_dict["state"] = self.state.to_dict()
@@ -666,35 +626,23 @@ class OvercookedGame(Game):
         return state_dict
 
     def to_json(self):
+        # This is what we send once on 'start_game'
         obj_dict = {}
         obj_dict["terrain"] = self.mdp.terrain_mtx if self._is_active else None
         obj_dict["state"] = self.get_state() if self._is_active else None
         return obj_dict
 
     def get_policy(self, npc_id, idx=0):
-        if npc_id.lower().startswith("rllib"):
-            try:
-                # Loading rllib agents requires additional helpers
-                fpath = os.path.join(AGENT_DIR, npc_id, "agent")
-                fix_bc_path(fpath)
-                agent = load_agent(fpath, agent_index=idx)
-                return agent
-            except Exception as e:
-                raise IOError(
-                    "Error loading Rllib Agent\n{}".format(e.__repr__())
-                )
-        else:
-            try:
-                fpath = os.path.join(AGENT_DIR, npc_id, "agent.pickle")
-                with open(fpath, "rb") as f:
-                    return pickle.load(f)
-            except Exception as e:
-                raise IOError("Error loading agent\n{}".format(e.__repr__()))
+        try:
+            fpath = os.path.join(AGENT_DIR, npc_id, "agent.pickle")
+            with open(fpath, "rb") as f:
+                return pickle.load(f)
+        except Exception as e:
+            raise IOError("Error loading agent\n{}".format(e.__repr__()))
 
     def get_data(self):
-        """
-        Returns and then clears the accumulated trajectory
-        """
+        # Called by app.py after the game ends (or resets).
+        # If dataCollection=on, we store the trajectory in a .pkl file for offline analysis
         data = {
             "uid": str(time()),
             "trajectory": self.trajectory,
@@ -710,6 +658,9 @@ class OvercookedGame(Game):
                 pickle.dump(data, f)
         return data
 
+############################################
+# OvercookedTutorial 
+############################################
 
 class OvercookedTutorial(OvercookedGame):
 
@@ -740,7 +691,7 @@ class OvercookedTutorial(OvercookedGame):
         )
         self.phase_two_score = phaseTwoScore
         self.phase_two_finished = False
-        self.max_time = 0
+        self.max_time = 0 # Ignore timer in the tutorial
         self.max_players = 2
         self.ticks_per_ai_action = 1
         self.curr_phase = 0
@@ -752,6 +703,10 @@ class OvercookedTutorial(OvercookedGame):
         return 1
 
     def needs_reset(self):
+        # The logic for each phase:
+        # phase 0 => reset once we have any positive score
+        # phase 1 => same
+        # phase 2 => reset once exact phaseTwoScore is reached
         if self.curr_phase == 0:
             return self.score > 0
         elif self.curr_phase == 1:
@@ -761,6 +716,7 @@ class OvercookedTutorial(OvercookedGame):
         return False
 
     def is_finished(self):
+        # If there are no layouts left AND we have effectively infinite score => done
         return not self.layouts and self.score >= float("inf")
 
     def reset(self):
@@ -768,6 +724,7 @@ class OvercookedTutorial(OvercookedGame):
         self.curr_phase += 1
 
     def get_policy(self, *args, **kwargs):
+        # Hardcode the tutorial AI
         return TutorialAI()
 
     def apply_actions(self):
@@ -788,84 +745,19 @@ class OvercookedTutorial(OvercookedGame):
                 self.phase_two_finished = True
 
 
-class DummyOvercookedGame(OvercookedGame):
-    """
-    Class that hardcodes the AI to be random. Used for debugging
-    """
-
-    def __init__(self, layouts=["cramped_room"], **kwargs):
-        super(DummyOvercookedGame, self).__init__(layouts, **kwargs)
-
-    def get_policy(self, *args, **kwargs):
-        return DummyAI()
-
-
-class DummyAI:
-    """
-    Randomly samples actions. Used for debugging
-    """
-
-    def action(self, state):
-        [action] = random.sample(
-            [
-                Action.STAY,
-                Direction.NORTH,
-                Direction.SOUTH,
-                Direction.WEST,
-                Direction.EAST,
-                Action.INTERACT,
-            ],
-            1,
-        )
-        return action, None
-
-    def reset(self):
-        pass
-
-
-class DummyComputeAI(DummyAI):
-    """
-    Performs simulated compute before randomly sampling actions. Used for debugging
-    """
-
-    def __init__(self, compute_unit_iters=1e5):
-        """
-        compute_unit_iters (int): Number of for loop cycles in one "unit" of compute. Number of
-                                    units performed each time is randomly sampled
-        """
-        super(DummyComputeAI, self).__init__()
-        self.compute_unit_iters = int(compute_unit_iters)
-
-    def action(self, state):
-        # Randomly sample amount of time to busy wait
-        iters = random.randint(1, 10) * self.compute_unit_iters
-
-        # Actually compute something (can't sleep) to avoid scheduling optimizations
-        val = 0
-        for i in range(iters):
-            # Avoid branch prediction optimizations
-            if i % 2 == 0:
-                val += 1
-            else:
-                val += 2
-
-        # Return randomly sampled action
-        return super(DummyComputeAI, self).action(state)
-
-
 class StayAI:
     """
-    Always returns "stay" action. Used for debugging
+    Always returns "stay" (Action.STAY).
     """
-
     def action(self, state):
         return Action.STAY, None
-
     def reset(self):
         pass
-
-
+    
 class TutorialAI:
+    """
+    Hardcoded loop for onions, cooking, delivering, used in OvercookedTutorial.
+    """
     COOK_SOUP_LOOP = [
         # Grab first onion
         Direction.WEST,
