@@ -1,10 +1,10 @@
 import os
 import sys
 
-# Import and patch the production eventlet server if necessary
+# If FLASK_ENV=production, we use eventlet for concurrency and patch
+# standard Python libraries so they work well with green threads.
 if os.getenv("FLASK_ENV", "production") == "production":
     import eventlet
-
     eventlet.monkey_patch()
 
 import atexit
@@ -12,153 +12,143 @@ import json
 import logging
 
 # All other imports must come after patch to ensure eventlet compatibility
+# Standard Python libraries for storing data or concurrency
 import pickle
 import queue
 from datetime import datetime
 from threading import Lock
 
+# Import custom modules from local files
 import game
 from flask import Flask, jsonify, render_template, request
 from flask_socketio import SocketIO, emit, join_room, leave_room
 from game import Game, OvercookedGame, OvercookedTutorial
 from utils import ThreadSafeDict, ThreadSafeSet
 
-### Thoughts -- where I'll log potential issues/ideas as they come up
-# Should make game driver code more error robust -- if overcooked randomlly errors we should catch it and report it to user
-# Right now, if one user 'join's before other user's 'join' finishes, they won't end up in same game
-# Could use a monitor on a conditional to block all global ops during calls to _ensure_consistent_state for debugging
-# Could cap number of sinlge- and multi-player games separately since the latter has much higher RAM and CPU usage
+###################
+# Global Config   #
+###################
 
-###########
-# Globals #
-###########
-
-# Read in global config
+# We load the configuration JSON. By default, we read from "config.json",
+# but this is configurable using the CONF_PATH env var.
 CONF_PATH = os.getenv("CONF_PATH", "config.json")
 with open(CONF_PATH, "r") as f:
     CONFIG = json.load(f)
 
-# Where errors will be logged
-LOGFILE = CONFIG["logfile"]
+# Some important fields from config.json:
+LOGFILE = CONFIG["logfile"]                # Path to the file where errors are logged
+LAYOUTS = CONFIG["layouts"]                # List of layout names (like "you_shall_not_pass")
+LAYOUT_GLOBALS = CONFIG["layout_globals"]  # Shared parameters for onion/tomato times/values
+MAX_GAME_LENGTH = CONFIG["MAX_GAME_LENGTH"] # Global limit on each game’s length (in seconds)
+AGENT_DIR = CONFIG["AGENT_DIR"]            # Directory that stores pickled RL agents
+MAX_GAMES = CONFIG["MAX_GAMES"]            # Maximum # of games that can exist at once
+MAX_FPS = CONFIG["MAX_FPS"]                # The server’s frames-per-second for broadcasting states
+PREDEFINED_CONFIG = json.dumps(CONFIG["predefined"])  # JSON that configures the /predefined page
+TUTORIAL_CONFIG = json.dumps(CONFIG["tutorial"])       # JSON that configures the /tutorial page
 
-# Available layout names
-LAYOUTS = CONFIG["layouts"]
-
-# Values that are standard across layouts
-LAYOUT_GLOBALS = CONFIG["layout_globals"]
-
-# Maximum allowable game length (in seconds)
-MAX_GAME_LENGTH = CONFIG["MAX_GAME_LENGTH"]
-
-# Path to where pre-trained agents will be stored on server
-AGENT_DIR = CONFIG["AGENT_DIR"]
-
-# Maximum number of games that can run concurrently. Contrained by available memory and CPU
-MAX_GAMES = CONFIG["MAX_GAMES"]
-
-# Frames per second cap for serving to client
-MAX_FPS = CONFIG["MAX_FPS"]
-
-# Default configuration for predefined experiment
-PREDEFINED_CONFIG = json.dumps(CONFIG["predefined"])
-
-# Default configuration for tutorial
-TUTORIAL_CONFIG = json.dumps(CONFIG["tutorial"])
-
-# Global queue of available IDs. This is how we synch game creation and keep track of how many games are in memory
+# We keep track of "free" game IDs in a queue. Each game has a unique ID from 0..(MAX_GAMES-1).
 FREE_IDS = queue.Queue(maxsize=MAX_GAMES)
 
-# Bitmap that indicates whether ID is currently in use. Game with ID=i is "freed" by setting FREE_MAP[i] = True
-FREE_MAP = ThreadSafeDict()
+FREE_MAP = ThreadSafeDict() # FREE_MAP[id] = True means "that ID is available"
 
-# Initialize our ID tracking data
+# Initialise our ID tracking data (15 IDs available since max num of games is 15)
 for i in range(MAX_GAMES):
     FREE_IDS.put(i)
     FREE_MAP[i] = True
 
-# Mapping of game-id to game objects
+# GAMES: a mapping { game_id -> Game object }, stored in a thread-safe dict
 GAMES = ThreadSafeDict()
 
-# Set of games IDs that are currently being played
+# ACTIVE_GAMES: A ThreadSafeSet of game_ids that are currently active (not waiting or ended).
 ACTIVE_GAMES = ThreadSafeSet()
 
-# Queue of games IDs that are waiting for additional players to join. Note that some of these IDs might
-# be stale (i.e. if FREE_MAP[id] = True)
+# WAITING_GAMES: A standard queue of game_ids that are waiting for players to join
 WAITING_GAMES = queue.Queue()
 
-# Mapping of users to locks associated with the ID. Enforces user-level serialization
+# USERS: { user_id -> Lock() }, ensures we can lock user operations (like joining a game). Enforces user-level serialization
 USERS = ThreadSafeDict()
 
-# Mapping of user id's to the current game (room) they are in
+# USER_ROOMS: { user_id -> game_id }, tracks which game the user is in. 
 USER_ROOMS = ThreadSafeDict()
 
-# Mapping of string game names to corresponding classes
+# We also define a mapping from "game_name" strings to the actual Python classes.
 GAME_NAME_TO_CLS = {
     "overcooked": OvercookedGame,
     "tutorial": OvercookedTutorial,
 }
 
+# We tell our local "game.py" to store global references to MAX_GAME_LENGTH and AGENT_DIR
 game._configure(MAX_GAME_LENGTH, AGENT_DIR)
 
 
-#######################
-# Flask Configuration #
-#######################
+########################
+# Flask Configuration  #
+########################
 
-# Create and configure flask app
+# We create a Flask app with 'static/templates' as the directory for HTML.
 app = Flask(__name__, template_folder=os.path.join("static", "templates"))
 app.config["DEBUG"] = os.getenv("FLASK_ENV", "production") == "development"
+
+# We wrap the Flask app with SocketIO for real-time communication.
+# cors_allowed_origins="*" means we don’t restrict cross-domain requests.
 socketio = SocketIO(app, cors_allowed_origins="*", logger=app.config["DEBUG"])
 
 
-# Attach handler for logging errors to file
+# We attach a FileHandler to log errors to LOGFILE
 handler = logging.FileHandler(LOGFILE)
 handler.setLevel(logging.ERROR)
 app.logger.addHandler(handler)
 
 
-#################################
-# Global Coordination Functions #
-#################################
-
+#####################################
+# Global Coordination / Helper Funcs #
+#####################################
 
 def try_create_game(game_name, **kwargs):
     """
-    Tries to create a brand new Game object based on parameters in `kwargs`
+    Attempts to create a brand new Game object (e.g., an OvercookedGame) with the given parameters.
 
-    Returns (Game, Error) that represent a pointer to a game object, and error that occured
-    during creation, if any. In case of error, `Game` returned in None. In case of sucess,
-    `Error` returned is None
-
-    Possible Errors:
-        - Runtime error if server is at max game capacity
-        - Propogate any error that occured in game __init__ function
+    Returns (game_obj, error):
+      - game_obj is a pointer to the newly created Game object, or None on failure
+      - error is None on success, or an Exception if there was an error
     """
     try:
+        # Grab a free ID from the FREE_IDS queue (non-blocking).
         curr_id = FREE_IDS.get(block=False)
         assert FREE_MAP[curr_id], "Current id is already in use"
+
+        # Get the class from the dictionary, default to OvercookedGame if not found.
         game_cls = GAME_NAME_TO_CLS.get(game_name, OvercookedGame)
+        # Instantiate the Game object with that ID
         game = game_cls(id=curr_id, **kwargs)
+
     except queue.Empty:
+        # Means there are no free game IDs => server at max capacity
         err = RuntimeError("Server at max capacity")
         return None, err
     except Exception as e:
+        # Any other error that might happen in the constructor
         return None, e
     else:
+        # On success, store the new Game object in GAMES
         GAMES[game.id] = game
         FREE_MAP[game.id] = False
         return game, None
 
 
 def cleanup_game(game: OvercookedGame):
+    """
+    Safely remove a game from memory (when it's ended or everyone left).
+    This frees up the game ID so it can be reused for a new game.
+    """
     if FREE_MAP[game.id]:
         raise ValueError("Double free on a game")
 
-    # User tracking
+    # For each user in that game, make them leave the room
     for user_id in game.players:
         leave_curr_room(user_id)
 
-    # Socketio tracking
+    # Close the socket room, free the ID, remove from GAMES
     socketio.close_room(game.id)
     # Game tracking
     FREE_MAP[game.id] = True
@@ -186,6 +176,7 @@ def set_curr_room(user_id, room_id):
 
 
 def leave_curr_room(user_id):
+    # Remove the user from the dict altogether
     del USER_ROOMS[user_id]
 
 
@@ -206,37 +197,31 @@ def get_waiting_game():
         return get_game(waiting_id)
 
 
-##########################
-# Socket Handler Helpers #
-##########################
-
+##################################
+# Socket Handler Helper Functions#
+##################################
 
 def _leave_game(user_id):
     """
-    Removes `user_id` from it's current game, if it exists. Rebroadcast updated game state to all
-    other users in the relevant game.
-
-    Leaving an active game force-ends the game for all other users, if they exist
-
-    Leaving a waiting game causes the garbage collection of game memory, if no other users are in the
-    game after `user_id` is removed
+    Removes `user_id` from its current game (if any). If it was an active game with multiple players,
+    that might cause the game to end for everyone. If it was a waiting game with no one else, 
+    we cleanup the game entirely.
     """
     # Get pointer to current game if it exists
     game = get_curr_game(user_id)
 
     if not game:
-        # Cannot leave a game if not currently in one
+        # Cannot leave a game if not currently in one (user was not in any game)
         return False
 
     # Acquire this game's lock to ensure all global state updates are atomic
     with game.lock:
-        # Update socket state maintained by socketio
+        # The user leaves the socket room
         leave_room(game.id)
-
-        # Update user data maintained by this app
+        # Remove them from the user->room mapping
         leave_curr_room(user_id)
 
-        # Update game state maintained by game object
+        # Remove them from the game’s player/spectator data
         if user_id in game.players:
             game.remove_player(user_id)
         else:
@@ -247,39 +232,55 @@ def _leave_game(user_id):
 
         # Rebroadcast data and handle cleanup based on the transition caused by leaving
         if was_active and game.is_empty():
-            # Active -> Empty
+            # The last player left an active game => deactivate + cleanup
             game.deactivate()
         elif game.is_empty():
-            # Waiting -> Empty
+            # If it was a waiting game with 1 user => just cleanup
             cleanup_game(game)
         elif not was_active:
-            # Waiting -> Waiting
+            # Still in waiting -> broadcast "waiting"
             emit("waiting", {"in_game": True}, room=game.id)
         elif was_active and game.is_ready():
-            # Active -> Active
+            # The game remains active with other players
             pass
         elif was_active and not game.is_empty():
-            # Active -> Waiting
+            # The game transitions from active to waiting
             game.deactivate()
 
     return was_active
 
 
 def _create_game(user_id, game_name, params={}):
+    """
+    Helper used by the on_create() or on_join() socket events:
+      - actually attempt to create the game
+      - add the user to it as either a player or spectator
+      - if the game is 'ready', start it, else put it in WAITING_GAMES
+    """
     game, err = try_create_game(game_name, **params)
     if not game:
         emit("creation_failed", {"error": err.__repr__()})
         return
+    
+    # By default we treat the user as "spectating" if the game is full
     spectating = True
+
+
     with game.lock:
         if not game.is_full():
+            # If the game isn’t full, this user can be a player
             spectating = False
             game.add_player(user_id)
         else:
+            # Otherwise, user is only spectating
             spectating = True
             game.add_spectator(user_id)
+
+        # Make the user join the socket.io room for that game    
         join_room(game.id)
         set_curr_room(user_id, game.id)
+
+        # If the game is ready to start, we do so
         if game.is_ready():
             game.activate()
             ACTIVE_GAMES.add(game.id)
@@ -288,8 +289,10 @@ def _create_game(user_id, game_name, params={}):
                 {"spectating": spectating, "start_info": game.to_json()},
                 room=game.id,
             )
+            # We spin up a background task that calls play_game() 6 times per second by default
             socketio.start_background_task(play_game, game, fps=6)
         else:
+            # If not ready, we put it in the WAITING_GAMES queue
             WAITING_GAMES.put(game.id)
             emit("waiting", {"in_game": True}, room=game.id)
 
@@ -299,52 +302,12 @@ def _create_game(user_id, game_name, params={}):
 #####################
 
 
-def _ensure_consistent_state():
-    """
-    Simple sanity checks of invariants on global state data
-
-    Let ACTIVE be the set of all active game IDs, GAMES be the set of all existing
-    game IDs, and WAITING be the set of all waiting (non-stale) game IDs. Note that
-    a game could be in the WAITING_GAMES queue but no longer exist (indicated by
-    the FREE_MAP)
-
-    - Intersection of WAITING and ACTIVE games must be empty set
-    - Union of WAITING and ACTIVE must be equal to GAMES
-    - id \in FREE_IDS => FREE_MAP[id]
-    - id \in ACTIVE_GAMES => Game in active state
-    - id \in WAITING_GAMES => Game in inactive state
-    """
-    waiting_games = set()
-    active_games = set()
-    all_games = set(GAMES)
-
-    for game_id in list(FREE_IDS.queue):
-        assert FREE_MAP[game_id], "Freemap in inconsistent state"
-
-    for game_id in list(WAITING_GAMES.queue):
-        if not FREE_MAP[game_id]:
-            waiting_games.add(game_id)
-
-    for game_id in ACTIVE_GAMES:
-        active_games.add(game_id)
-
-    assert (
-        waiting_games.union(active_games) == all_games
-    ), "WAITING union ACTIVE != ALL"
-
-    assert not waiting_games.intersection(
-        active_games
-    ), "WAITING intersect ACTIVE != EMPTY"
-
-    assert all(
-        [get_game(g_id)._is_active for g_id in active_games]
-    ), "Active ID in waiting state"
-    assert all(
-        [not get_game(g_id)._id_active for g_id in waiting_games]
-    ), "Waiting ID in active state"
-
 
 def get_agent_names():
+    """
+    Returns the subdirectories in AGENT_DIR (each one presumably a saved agent).
+    Used by the home page to populate agent dropdowns.
+    """
     return [
         d
         for d in os.listdir(AGENT_DIR)
@@ -353,15 +316,15 @@ def get_agent_names():
 
 
 ######################
-# Application routes #
+# Flask HTTP Routes  #
 ######################
-
 # Hitting each of these endpoints creates a brand new socket that is closed
 # at after the server response is received. Standard HTTP protocol
 
-
 @app.route("/")
 def index():
+    # The homepage. We pass in the list of agent_names and layouts so that
+    # the user can pick them in the drop-down <select>.
     agent_names = get_agent_names()
     return render_template(
         "index.html", agent_names=agent_names, layouts=LAYOUTS
@@ -370,9 +333,9 @@ def index():
 
 @app.route("/predefined")
 def predefined():
+    # The "predefined" page, which runs multiple layouts in a row
     uid = request.args.get("UID")
     num_layouts = len(CONFIG["predefined"]["experimentParams"]["layouts"])
-
     return render_template(
         "predefined.html",
         uid=uid,
@@ -383,16 +346,24 @@ def predefined():
 
 @app.route("/instructions")
 def instructions():
+    # Shows the instructions page. We pass layout_conf to define onion/tomato times, etc.
     return render_template("instructions.html", layout_conf=LAYOUT_GLOBALS)
-
 
 @app.route("/tutorial")
 def tutorial():
+    # The tutorial page, which loads TUTORIAL_CONFIG from config.json
     return render_template("tutorial.html", config=TUTORIAL_CONFIG)
 
 
 @app.route("/debug")
 def debug():
+    """
+    A debug endpoint that returns a JSON of all relevant server state:
+      - active games
+      - waiting games
+      - free IDs
+      - user->room mappings
+    """
     resp = {}
     games = []
     active_games = []
@@ -400,6 +371,7 @@ def debug():
     users = []
     free_ids = []
     free_map = {}
+
     for game_id in ACTIVE_GAMES:
         game = get_game(game_id)
         active_games.append({"id": game_id, "state": game.to_json()})
@@ -427,13 +399,13 @@ def debug():
     resp["users"] = users
     resp["free_ids"] = free_ids
     resp["free_map"] = free_map
+
     return jsonify(resp)
 
 
-#########################
-# Socket Event Handlers #
-#########################
-
+###########################
+# Socket.IO Event Handlers#
+###########################
 # Asynchronous handling of client-side socket events. Note that the socket persists even after the
 # event has been handled. This allows for more rapid data communication, as a handshake only has to
 # happen once at the beginning. Thus, socket events are used for all game updates, where more rapid
@@ -442,26 +414,22 @@ def debug():
 
 def creation_params(params):
     """
-    This function extracts the dataCollection and oldDynamics settings from the input and
-    process them before sending them to game creation
+    This function extracts the dataCollection from the input and
+    processes it before sending it to game creation
     """
     # this params file should be a dictionary that can have these keys:
     # playerZero: human/Rllib*agent
     # playerOne: human/Rllib*agent
     # layout: one of the layouts in the config file, I don't think this one is used
     # gameTime: time in seconds
-    # oldDynamics: on/off
     # dataCollection: on/off
     # layouts: [layout in the config file], this one determines which layout to use, and if there is more than one layout, a series of game is run back to back
-    #
 
-    use_old = False
-    if "oldDynamics" in params and params["oldDynamics"] == "on":
-        params["mdp_params"] = {"old_dynamics": True}
-        use_old = True
-
+    # Use new dynamics only, the student delted the option to use the old ones
+    use_old = False 
+    
     if "dataCollection" in params and params["dataCollection"] == "on":
-        # config the necessary setting to properly save data
+        # We'll store trajectory data if dataCollection=on
         params["dataCollection"] = True
         mapping = {"human": "H"}
         # gameType is either HH, HA, AH, AA depending on the config
@@ -484,16 +452,20 @@ def creation_params(params):
 
 @socketio.on("create")
 def on_create(data):
+    """
+    The client emits "create" when they explicitly want to create a new game.
+    We parse the user’s 'params' (like layout, gameTime, etc.) and 
+    then call _create_game(...) if they aren’t already in one.
+    """
     user_id = request.sid
     with USERS[user_id]:
         # Retrieve current game if one exists
         curr_game = get_curr_game(user_id)
         if curr_game:
-            # Cannot create if currently in a game
+            # If user is already in a game, do nothing
             return
 
         params = data.get("params", {})
-
         creation_params(params)
 
         game_name = data.get("game_name", "overcooked")
@@ -502,6 +474,12 @@ def on_create(data):
 
 @socketio.on("join")
 def on_join(data):
+    """
+    The client emits "join" to either:
+      1) Join an existing waiting game
+      2) If none is found, create a new game if create_if_not_found=True
+      3) If none found and create_if_not_found=False, they get put in 'waiting' state
+    """
     user_id = request.sid
     with USERS[user_id]:
         create_if_not_found = data.get("create_if_not_found", True)
@@ -512,11 +490,11 @@ def on_join(data):
             # Cannot join if currently in a game
             return
 
-        # Retrieve a currently open game if one exists
+        # Try to get a waiting game from the queue
         game = get_waiting_game()
 
         if not game and create_if_not_found:
-            # No available game was found so create a game
+            # If no waiting game is found, create a new one
             params = data.get("params", {})
             creation_params(params)
             game_name = data.get("game_name", "overcooked")
@@ -524,10 +502,10 @@ def on_join(data):
             return
 
         elif not game:
-            # No available game was found so start waiting to join one
+            # If no waiting game found and we’re not allowed to create => waiting
             emit("waiting", {"in_game": False})
         else:
-            # Game was found so join it
+            # We found a waiting game, so join it
             with game.lock:
                 join_room(game.id)
                 set_curr_room(user_id, game.id)
@@ -551,6 +529,10 @@ def on_join(data):
 
 @socketio.on("leave")
 def on_leave(data):
+    """
+    If the user clicks "Leave" or otherwise triggers a leave event, we remove them from the game,
+    possibly ending the game for all players if it's active.
+    """
     user_id = request.sid
     with USERS[user_id]:
         was_active = _leave_game(user_id)
@@ -563,6 +545,10 @@ def on_leave(data):
 
 @socketio.on("action")
 def on_action(data):
+    """
+    Fired when a human user presses an arrow key or spacebar. We queue that action into the game’s 
+    "pending actions" for that player. The game logic is advanced in play_game(...) background task.
+    """
     user_id = request.sid
     action = data["action"]
 
@@ -575,16 +561,21 @@ def on_action(data):
 
 @socketio.on("connect")
 def on_connect():
+    """
+    When a new WebSocket connection is established, we add that user to USERS with a lock.
+    """
     user_id = request.sid
-
     if user_id in USERS:
         return
-
     USERS[user_id] = Lock()
 
 
 @socketio.on("disconnect")
 def on_disconnect():
+    """
+    If the client disconnects unexpectedly, we treat it the same as "leave".
+    This ensures the server doesn’t keep them stuck in a game.
+    """
     print("disonnect triggered", file=sys.stderr)
     # Ensure game data is properly cleaned-up in case of unexpected disconnect
     user_id = request.sid
@@ -592,13 +583,17 @@ def on_disconnect():
         return
     with USERS[user_id]:
         _leave_game(user_id)
-
     del USERS[user_id]
 
 
-# Exit handler for server
+################
+# on_exit hook #
+################
+
 def on_exit():
-    # Force-terminate all games on server termination
+    """
+    Called at server shutdown. We forcibly end every active game so it doesn’t hang.
+    """
     for game_id in GAMES:
         socketio.emit(
             "end_game",
@@ -614,21 +609,21 @@ def on_exit():
 # Game Loop #
 #############
 
-
 def play_game(game: OvercookedGame, fps=6):
     """
-    Asynchronously apply real-time game updates and broadcast state to all clients currently active
-    in the game. Note that this loop must be initiated by a parallel thread for each active game
-
-    game (Game object):     Stores relevant game state. Note that the game id is the same as to socketio
-                            room id for all clients connected to this game
-    fps (int):              Number of game ticks that should happen every second
+    This function runs in a background thread for each active game. 
+    Every 1/fps second, it:
+      1) Locks the game
+      2) Calls game.tick() to apply pending actions
+      3) Emits "state_pong" to all clients with the new state
+      4) If the game resets or ends, we broadcast that event and do the relevant cleanup
     """
     status = Game.Status.ACTIVE
     while status != Game.Status.DONE and status != Game.Status.INACTIVE:
         with game.lock:
             status = game.tick()
         if status == Game.Status.RESET:
+            # If the game signals a "reset", we emit "reset_game", sleep for reset_timeout
             with game.lock:
                 data = game.get_data()
             socketio.emit(
@@ -642,11 +637,13 @@ def play_game(game: OvercookedGame, fps=6):
             )
             socketio.sleep(game.reset_timeout / 1000)
         else:
+            # Otherwise, just a normal "state update"
             socketio.emit(
                 "state_pong", {"state": game.get_state()}, room=game.id
             )
         socketio.sleep(1 / fps)
 
+    # Once we break out of the loop, it means the game is done or inactive
     with game.lock:
         data = game.get_data()
         socketio.emit(
@@ -657,7 +654,9 @@ def play_game(game: OvercookedGame, fps=6):
             game.deactivate()
         cleanup_game(game)
 
-
+#############################
+# Run the app if main       #
+#############################
 if __name__ == "__main__":
     # Dynamically parse host and port from environment variables (set by docker build)
     host = os.getenv("HOST", "0.0.0.0")
