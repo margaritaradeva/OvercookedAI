@@ -753,7 +753,7 @@ class StayAI:
         return Action.STAY, None
     def reset(self):
         pass
-    
+
 class TutorialAI:
     """
     Hardcoded loop for onions, cooking, delivering, used in OvercookedTutorial.

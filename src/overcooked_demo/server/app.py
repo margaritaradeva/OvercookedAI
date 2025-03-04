@@ -426,8 +426,10 @@ def creation_params(params):
     # layouts: [layout in the config file], this one determines which layout to use, and if there is more than one layout, a series of game is run back to back
 
     # Use new dynamics only, the student delted the option to use the old ones
-    use_old = False 
     
+    
+    
+
     if "dataCollection" in params and params["dataCollection"] == "on":
         # We'll store trajectory data if dataCollection=on
         params["dataCollection"] = True
@@ -441,10 +443,8 @@ def creation_params(params):
             "time": datetime.today().strftime("%Y-%m-%d_%H-%M-%S"),
             "type": gameType,
         }
-        if use_old:
-            params["collection_config"]["old_dynamics"] = "Old"
-        else:
-            params["collection_config"]["old_dynamics"] = "New"
+        
+        params["collection_config"]["old_dynamics"] = "New"
 
     else:
         params["dataCollection"] = False
@@ -466,6 +466,7 @@ def on_create(data):
             return
 
         params = data.get("params", {})
+        socketio.emit("paramm", params, broadcast=True)
         creation_params(params)
 
         game_name = data.get("game_name", "overcooked")
@@ -556,8 +557,17 @@ def on_action(data):
     if not game:
         return
 
+
+    # 1) Enqueue the action in the Overcooked environment
     game.enqueue_action(user_id, action)
 
+    # 2) Also broadcast a custom event, e.g. "human_action",
+    #    so that the Java agent can see it too.
+    #    We use broadcast=True so *all* connected sockets get it (including Java).
+    socketio.emit("human_action", {
+        "user_id": user_id,
+        "action": action
+    }, broadcast=True)
 
 @socketio.on("connect")
 def on_connect():
@@ -568,6 +578,16 @@ def on_connect():
     if user_id in USERS:
         return
     USERS[user_id] = Lock()
+
+#######################
+# Java side connection #
+#######################
+
+@socketio.on("java_connected")
+def handle_java_connected(data):
+    print("Got java_connected event from Java with data:", data)
+    # Broadcast this event to ALL connected clients (including browsers)
+    socketio.emit("java_connected", data, broadcast=True)
 
 
 @socketio.on("disconnect")

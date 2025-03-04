@@ -186,6 +186,7 @@ socket.on('start_game', function(data) {
     $('#leave').show();
     $('#leave').attr("disabled", false);
     $('#game-title').show();
+   
 
     // If we are an active player, enable keyboard input
     if (!window.spectating) {
@@ -226,7 +227,7 @@ socket.on('reset_game', function(data) {
 });
 
 /**
- * "state_pong": A regular state update from the server (30 fps).
+ * "state_pong": A regular state update from the server.
  *   - Call drawState(...) to update the Phaser display.
  */
 socket.on('state_pong', function(data) {
@@ -339,6 +340,19 @@ function enable_key_listener() {
 function disable_key_listener() {
     $(document).off('keydown');
 };
+
+/* -----------------------------------------------------------------------------
+ * Java connection
+ * -----------------------------------------------------------------------------
+ */
+// Listen for a custom "java_connected" event from the server
+socket.on('java_connected', function(data) {
+    console.log("Received 'java_connected' from server with data:", data);
+    // Append a message to the #overcooked div
+    $('#overcooked').append(
+        '<p style="color:green;">Java agent says: ' + data + '</p>'
+    );
+});
 
 
 /* -----------------------------------------------------------------------------
