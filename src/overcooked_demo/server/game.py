@@ -3,15 +3,13 @@ import os
 import pickle
 import random
 from abc import ABC, abstractmethod
-from queue import Empty, Full, LifoQueue, Queue
+from queue import Empty, Full, Queue
 from threading import Lock, Thread
 from time import time
 
-import ray
 from utils import DOCKER_VOLUME, create_dirs
 
 # We import classes / functions from Overcooked library
-from human_aware_rl.rllib.rllib import load_agent # REMOVE LATER
 from overcooked_ai_py.mdp.actions import Action, Direction
 from overcooked_ai_py.mdp.overcooked_env import OvercookedEnv # MAYBE
 from overcooked_ai_py.mdp.overcooked_mdp import OvercookedGridworld
@@ -21,37 +19,17 @@ from overcooked_ai_py.planning.planners import (
 ) # REMOVE LATER
 
 # Global module variables that get set by _configure() in app.py
-AGENT_DIR = None      # Where to find saved/pickled AI policies
 MAX_GAME_TIME = None  # The maximum time a game can run
 
 
-def _configure(max_game_time, agent_dir):
+def _configure(max_game_time):
     """
     Called once by app.py to set references to the agent directory and max game time.
     """
-    global AGENT_DIR, MAX_GAME_TIME
+    global MAX_GAME_TIME
     MAX_GAME_TIME = max_game_time
-    AGENT_DIR = agent_dir
+    
 
-
-def fix_bc_path(path):
-    """"
-    A hacky fix for RLlib agents that also used BC during training. 
-    RLlib requires the BC model path to be correct inside config.pkl.
-    We rewrite the path so the BC model can be found properly.
-    """
-
-    import dill
-    # the path is the agents/Rllib.*/agent directory
-    agent_path = os.path.dirname(path)
-    with open(os.path.join(agent_path, "config.pkl"), "rb") as f:
-        data = dill.load(f)
-    bc_model_dir = data["bc_params"]["bc_config"]["model_dir"]
-    last_dir = os.path.basename(bc_model_dir)
-    bc_model_dir = os.path.join(agent_path, "bc_params", last_dir)
-    data["bc_params"]["bc_config"]["model_dir"] = bc_model_dir
-    with open(os.path.join(agent_path, "config.pkl"), "wb") as f:
-        dill.dump(data, f)
 
 ########################################
 # Base Game Abstract Class
@@ -331,10 +309,8 @@ class OvercookedGame(Game):
         - mdp (OvercookedGridworld): Controls the underlying Overcooked game logic
         - score (int): Current reward acheived by all players
         - max_time (int): Number of seconds the game should last
-        - npc_policies (dict): Maps user_id to policy (Agent) for each AI player
-        - npc_state_queues (dict): Mapping of NPC user_ids to LIFO queues for the policy to process
         - curr_tick (int): How many times the game server has called this instance's `tick` method
-        - ticker_per_ai_action (int): How many frames should pass in between NPC policy forward passes.
+        - ticker_per_ai_action (int): How many frames should pass in between updates.
             Note that this is a lower bound; if the policy is computationally expensive the actual frames
             per forward pass can be higher
         - action_to_overcooked_action (dict): Maps action names returned by client to action names used by OvercookedGridworld
@@ -344,8 +320,6 @@ class OvercookedGame(Game):
         - randomized (boolean): Whether the order of the layouts should be randomized
 
     Methods:
-        - npc_policy_consumer: Background process that asynchronously computes NPC policy forward passes. One thread
-            spawned for each NPC
         - _curr_game_over: Determines whether the game on the current mdp has ended
     """
 
@@ -372,8 +346,6 @@ class OvercookedGame(Game):
         self.score = 0
         self.phi = 0
         self.max_time = min(int(gameTime), MAX_GAME_TIME)
-        self.npc_policies = {}
-        self.npc_state_queues = {}
         self.action_to_overcooked_action = {
             "STAY": Action.STAY,
             "UP": Direction.NORTH,
@@ -389,28 +361,7 @@ class OvercookedGame(Game):
 
         if randomized:
             random.shuffle(self.layouts)
-
-        # If the user picks an AI (like "StayAI" or "rllib..."), we create a "player_id" of that name 
-        # and store a policy in self.npc_policies
-        if playerZero != "human":
-            player_zero_id = playerZero + "_0"
-            self.add_player(player_zero_id, idx=0, buff_size=1, is_human=False)
-            self.npc_policies[player_zero_id] = self.get_policy(
-                playerZero, idx=0
-            )
-            self.npc_state_queues[player_zero_id] = LifoQueue()
-        if playerOne != "human":
-            player_one_id = playerOne + "_1"
-            self.add_player(player_one_id, idx=1, buff_size=1, is_human=False)
-            self.npc_policies[player_one_id] = self.get_policy(
-                playerOne, idx=1
-            )
-            self.npc_state_queues[player_one_id] = LifoQueue()
-        
-        # If we used Ray to load an RLlib agent, we shut it down after loading
-        if ray.is_initialized():
-            ray.shutdown()
-
+    
         # If dataCollection=on, we store the trajectory for eventual saving
         if kwargs["dataCollection"]:
             self.write_data = True
@@ -448,18 +399,6 @@ class OvercookedGame(Game):
             else:
                 raise ValueError("Inconsistent state")
 
-    def npc_policy_consumer(self, policy_id):
-        """
-        Runs in a background thread for each AI. It blocks on npc_state_queues[policy_id].get(),
-        then calls policy.action(state).
-        We then do OvercookedGame.enqueue_action(...) to push the chosen action into the game’s queue.
-        """
-        queue = self.npc_state_queues[policy_id]
-        policy = self.npc_policies[policy_id]
-        while self._is_active:
-            state = queue.get()
-            npc_action, _ = policy.action(state)
-            super(OvercookedGame, self).enqueue_action(policy_id, npc_action)
 
     def is_full(self):
         return self.num_players >= self.max_players
@@ -488,11 +427,11 @@ class OvercookedGame(Game):
         pass
 
     def apply_actions(self):
-        # Default joint action, as NPC policies and clients probably don't enqueue actions fast
+        # Default joint action as clients probably don't enqueue actions fast
         # enough to produce one at every tick
         joint_action = [Action.STAY] * len(self.players)
 
-        # Synchronize individual player actions into a joint-action as required by overcooked logic
+        # Synchronise individual player actions into a joint-action as required by overcooked logic
         for i in range(len(self.players)):
             # if this is a human, don't block and inject
             if self.players[i] in self.human_players:
@@ -515,10 +454,6 @@ class OvercookedGame(Game):
                 prev_state, self.mp, gamma=0.99
             )
 
-        # Send next state to all background consumers if needed
-        if self.curr_tick % self.ticks_per_ai_action == 0:
-            for npc_id in self.npc_policies:
-                self.npc_state_queues[npc_id].put(self.state, block=False)
 
         # Update score based on soup deliveries that might have occured
         curr_reward = sum(info["sparse_reward_by_agent"])
@@ -593,19 +528,9 @@ class OvercookedGame(Game):
         self.score = 0
         self.threads = []
 
-        # For each AI, reset it and start a thread that calls npc_policy_consumer(...)
-        for npc_policy in self.npc_policies:
-            self.npc_policies[npc_policy].reset()
-            self.npc_state_queues[npc_policy].put(self.state)
-            t = Thread(target=self.npc_policy_consumer, args=(npc_policy,))
-            self.threads.append(t)
-            t.start()
 
     def deactivate(self):
         super(OvercookedGame, self).deactivate()
-        # Force the AI threads to not block
-        for npc_policy in self.npc_policies:
-            self.npc_state_queues[npc_policy].put(self.state)
 
         # Wait for all background threads to exit
         for t in self.threads:
@@ -632,14 +557,7 @@ class OvercookedGame(Game):
         obj_dict["state"] = self.get_state() if self._is_active else None
         return obj_dict
 
-    def get_policy(self, npc_id, idx=0):
-        try:
-            fpath = os.path.join(AGENT_DIR, npc_id, "agent.pickle")
-            with open(fpath, "rb") as f:
-                return pickle.load(f)
-        except Exception as e:
-            raise IOError("Error loading agent\n{}".format(e.__repr__()))
-
+    
     def get_data(self):
         # Called by app.py after the game ends (or resets).
         # If dataCollection=on, we store the trajectory in a .pkl file for offline analysis
@@ -745,14 +663,6 @@ class OvercookedTutorial(OvercookedGame):
                 self.phase_two_finished = True
 
 
-class StayAI:
-    """
-    Always returns "stay" (Action.STAY).
-    """
-    def action(self, state):
-        return Action.STAY, None
-    def reset(self):
-        pass
 
 class TutorialAI:
     """

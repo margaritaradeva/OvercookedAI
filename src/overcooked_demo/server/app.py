@@ -40,7 +40,6 @@ LOGFILE = CONFIG["logfile"]                # Path to the file where errors are l
 LAYOUTS = CONFIG["layouts"]                # List of layout names (like "you_shall_not_pass")
 LAYOUT_GLOBALS = CONFIG["layout_globals"]  # Shared parameters for onion/tomato times/values
 MAX_GAME_LENGTH = CONFIG["MAX_GAME_LENGTH"] # Global limit on each game’s length (in seconds)
-AGENT_DIR = CONFIG["AGENT_DIR"]            # Directory that stores pickled RL agents
 MAX_GAMES = CONFIG["MAX_GAMES"]            # Maximum # of games that can exist at once
 MAX_FPS = CONFIG["MAX_FPS"]                # The server’s frames-per-second for broadcasting states
 PREDEFINED_CONFIG = json.dumps(CONFIG["predefined"])  # JSON that configures the /predefined page
@@ -77,8 +76,8 @@ GAME_NAME_TO_CLS = {
     "tutorial": OvercookedTutorial,
 }
 
-# We tell our local "game.py" to store global references to MAX_GAME_LENGTH and AGENT_DIR
-game._configure(MAX_GAME_LENGTH, AGENT_DIR)
+# We tell our local "game.py" to store global references to MAX_GAME_LENGTH 
+game._configure(MAX_GAME_LENGTH)
 
 
 ########################
@@ -303,16 +302,6 @@ def _create_game(user_id, game_name, params={}):
 
 
 
-def get_agent_names():
-    """
-    Returns the subdirectories in AGENT_DIR (each one presumably a saved agent).
-    Used by the home page to populate agent dropdowns.
-    """
-    return [
-        d
-        for d in os.listdir(AGENT_DIR)
-        if os.path.isdir(os.path.join(AGENT_DIR, d))
-    ]
 
 
 ######################
@@ -325,9 +314,8 @@ def get_agent_names():
 def index():
     # The homepage. We pass in the list of agent_names and layouts so that
     # the user can pick them in the drop-down <select>.
-    agent_names = get_agent_names()
     return render_template(
-        "index.html", agent_names=agent_names, layouts=LAYOUTS
+        "index.html", layouts=LAYOUTS
     )
 
 
@@ -418,14 +406,14 @@ def creation_params(params):
     processes it before sending it to game creation
     """
     # this params file should be a dictionary that can have these keys:
-    # playerZero: human/Rllib*agent
-    # playerOne: human/Rllib*agent
-    # layout: one of the layouts in the config file, I don't think this one is used
+    # playerZero: human
+    # playerOne: Jason Agent (registered as human as we handle the logic of the Agent in another repository)
+    # layout: one of the layouts in the config file
     # gameTime: time in seconds
     # dataCollection: on/off
     # layouts: [layout in the config file], this one determines which layout to use, and if there is more than one layout, a series of game is run back to back
 
-    # Use new dynamics only, the student delted the option to use the old ones
+    
     
     
     

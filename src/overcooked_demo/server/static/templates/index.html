@@ -50,18 +50,12 @@
             <label for="playerZero" style="color:#1E6A9E">Player 1</label>
             <select class="form-control" id="playerZero" name="playerZero">
               <option value="human">Human Keyboard Input</option>
-              {% for agent_name in agent_names %}
-                  <option value={{agent_name}}>{{agent_name}}</option>
-              {% endfor %}
             </select>
           </div>
           <div class="form-group col-lg-3">
             <label for="playerOne" style="color:#44956B">Player 2</label>
             <select class="form-control" id="playerOne" name="playerOne">
-              <option value="human">Human Keyboard Input</option>
-              {% for agent_name in agent_names %}
-                  <option value={{agent_name}}>{{agent_name}}</option>
-              {% endfor %}
+              <option value="human">Stay Jason</option>
             </select>
           </div>
           <div class="form-group col-lg-2">
@@ -77,16 +71,7 @@
             <input type="number" id="gameTime" value="30" min="1" max="1800" name="gameTime" class="form-control">
           </div>
           <div class="form-group col-lg-2">
-            <!-- Additional options for potential, old dynamics, data collection -->
-            <label for="showPotential">Show Potential?</label>
-            <input type="checkbox" id="showPotential" name="showPotential">
-            <label for="Use Old Dynamics"
-                   data-toggle="tooltip"
-                   data-placement="top"
-                   title="If checked, soup cooks automatically once all ingredients are in the pot.">
-              Old dynamics?
-            </label>
-            <input type="checkbox" id="oldDynamics" name="oldDynamics">
+            <!-- Additional option for data collection -->
             <label for="dataCollection"
                    data-toggle="tooltip"
                    data-placement="top"
