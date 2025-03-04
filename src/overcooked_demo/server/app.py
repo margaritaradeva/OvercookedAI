@@ -286,8 +286,9 @@ def _create_game(user_id, game_name, params={}):
             emit(
                 "start_game",
                 {"spectating": spectating, "start_info": game.to_json()},
-                room=game.id,
+                broadcast=True,
             )
+
             # We spin up a background task that calls play_game() 6 times per second by default
             socketio.start_background_task(play_game, game, fps=6)
         else:
@@ -454,7 +455,6 @@ def on_create(data):
             return
 
         params = data.get("params", {})
-        socketio.emit("paramm", params, broadcast=True)
         creation_params(params)
 
         game_name = data.get("game_name", "overcooked")
@@ -509,6 +509,11 @@ def on_join(data):
                         {"spectating": False, "start_info": game.to_json()},
                         room=game.id,
                     )
+                    layout_info = {
+                    "layout_name":game.curr_layout, # name of layout e.g. cramped_room
+                    "terrain": game.mdp.terrain_mtx # 2d list of the terrain
+                    }
+                    socketio.emit("java_layout",layout_info, broadcast=True)
                     socketio.start_background_task(play_game, game)
                 else:
                     # Still need to keep waiting for players
@@ -549,13 +554,18 @@ def on_action(data):
     # 1) Enqueue the action in the Overcooked environment
     game.enqueue_action(user_id, action)
 
-    # 2) Also broadcast a custom event, e.g. "human_action",
+    # 2) Also broadcast "human_action",
     #    so that the Java agent can see it too.
     #    We use broadcast=True so *all* connected sockets get it (including Java).
     socketio.emit("human_action", {
         "user_id": user_id,
         "action": action
     }, broadcast=True)
+
+    # send a snapshot of the current game state to the Java agent
+    with game.lock:
+        current_state = game.get_state()
+    socketio.emit("java_state_update", current_state, broadcast=True)
 
 @socketio.on("connect")
 def on_connect():
