@@ -3,7 +3,6 @@
     "layouts" : ["you_shall_not_pass"],
     "MAX_GAMES" : 15,
     "MAX_GAME_LENGTH" : 360,
-    "AGENT_DIR" : "./static/assets/agents",
     "MAX_FPS" : 30,
     "predefined" : {
         "experimentParams" : {
