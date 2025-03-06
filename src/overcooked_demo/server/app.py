@@ -17,6 +17,7 @@ import pickle
 import queue
 from datetime import datetime
 from threading import Lock
+import time
 
 # Import custom modules from local files
 import game
@@ -562,10 +563,8 @@ def on_action(data):
         "action": action
     }, broadcast=True)
 
-    # send a snapshot of the current game state to the Java agent
-    with game.lock:
-        current_state = game.get_state()
-    socketio.emit("java_state_update", current_state, broadcast=True)
+    
+    
 
 @socketio.on("connect")
 def on_connect():
@@ -635,8 +634,13 @@ def play_game(game: OvercookedGame, fps=6):
       2) Calls game.tick() to apply pending actions
       3) Emits "state_pong" to all clients with the new state
       4) If the game resets or ends, we broadcast that event and do the relevant cleanup
+    
+    Also sending "java_state_update" once every second so that the agent  can get an up to date information.
     """
     status = Game.Status.ACTIVE
+
+    last_java_update = time.time()
+    
     while status != Game.Status.DONE and status != Game.Status.INACTIVE:
         with game.lock:
             status = game.tick()
@@ -659,6 +663,15 @@ def play_game(game: OvercookedGame, fps=6):
             socketio.emit(
                 "state_pong", {"state": game.get_state()}, room=game.id
             )
+        # Send updates to the Java server side once per second
+        now = time.time() # check the time now
+        if now - last_java_update >=1.0:
+            # At 1.0 second, lock the game to read the state safely
+            with game.lock:
+                game_state = game.get_state()
+            # Send the update and update the last time it has been sent so we can track it
+            socketio.emit("java_state_update", game_state, broadcast=True)
+            last_java_update = now
         socketio.sleep(1 / fps)
 
     # Once we break out of the loop, it means the game is done or inactive
