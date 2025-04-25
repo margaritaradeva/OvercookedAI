@@ -38,7 +38,7 @@ Make sure you have installed on your system:
 1. **Clone this repository**  
    ```bash
    git clone https://github.com/margaritaradeva/OvercookedAI.git
-   cd overcooked_ai/src/overcooked_demo
+   cd src/overcooked_demo
    ```
 2. **Build the Docker images and start the Flask server**
    ```bash
