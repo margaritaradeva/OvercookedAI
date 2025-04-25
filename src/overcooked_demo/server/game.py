@@ -16,7 +16,7 @@ from overcooked_ai_py.mdp.overcooked_mdp import OvercookedGridworld
 from overcooked_ai_py.planning.planners import (
     NO_COUNTERS_PARAMS,
     MotionPlanner,
-) # REMOVE LATER
+) 
 
 # Global module variables that get set by _configure() in app.py
 MAX_GAME_TIME = None  # The maximum time a game can run

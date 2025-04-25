@@ -354,6 +354,28 @@ socket.on('java_connected', function(data) {
     );
 });
 
+// Listen for thought messages (what the agent is doing) from the server.
+socket.on("thought", function(data) {
+    console.log("Received thought:", data.thought);
+    // Only display if the user has enabled thought display.
+    if (window.showThoughts) {
+        // Update the #thoughts element (you can choose to replace or append the message)
+        $("#thoughts").text(data);
+        // Optionally, you could fade in/out the text, or add a timestamp, etc.
+    }
+});
+
+$(document).ready(function() {
+    // Initially, disable thought display
+    window.showThoughts = false;
+    // When the user toggles the checkbox, update the flag
+    $("#toggle-thoughts").on("change", function() {
+        window.showThoughts = this.checked;
+        if (!this.checked) {
+            $("#thoughts").text(""); // clear if disabled
+        }
+    });
+});
 
 /* -----------------------------------------------------------------------------
  * Utility Functions

@@ -5,7 +5,7 @@
     <meta name="viewport" content="width=device-width, initial-scale=1, shrink-to-fit=no">
     
     <!-- 
-      We’re using Bootstrap 4 via CDN for basic layout & components.
+      Using Bootstrap 4 via CDN for basic layout & components.
       Integrity/crossorigin attributes help with security/subresource integrity.
     -->
     <link rel="stylesheet"
@@ -13,9 +13,8 @@
           integrity="sha384-ggOyR0iXCbMQv3Xipma34MD+dH/1fQ784/j6cY/iJTQUOhcWrnQq4sF86dIHNDz0W1"
           crossorigin="anonymous">
     
-    <!-- Page Title & Favicon -->
+    <!-- Page Title -->
     <title>Overcooked Symbolic AI</title>
-    <link rel="Favicon" href="static/favicon.ico" />
 
     <!-- jQuery, D3, Babel, Popper, Bootstrap JS, Socket.IO, Phaser -->
     <script src="static/lib/jquery-min.js" type="text/javascript"></script>
@@ -41,8 +40,11 @@
   <body>
     <!-- 
       A simple form for choosing player types, layout, etc.
-      We rely on Bootstrap’s .container, .row, .col-lg-* classes for layout.
     -->
+    <div class="container my-3">
+      <h1 class="text-center">Design and Implementation of Human-AI Cooperation in a Video Game</h1>
+    </div>
+    
     <form>
       <div class="container mt-3">
         <div class="row text-center">
@@ -55,7 +57,7 @@
           <div class="form-group col-lg-3">
             <label for="playerOne" style="color:#44956B">Player 2</label>
             <select class="form-control" id="playerOne" name="playerOne">
-              <option value="human">Stay Jason</option>
+              <option value="human">Symbolic AI Agent</option>
             </select>
           </div>
           <div class="form-group col-lg-2">
@@ -84,16 +86,26 @@
       </div>
     </form>
 
+
+    <div id="thought-container" class="container my-3">
+      <div class="form-check">
+        <input class="form-check-input" type="checkbox" id="toggle-thoughts" />
+        <label class="form-check-label" for="toggle-thoughts">Show Thought Process</label>
+      </div>
+      <div id="thoughts" class="border p-2 mt-2" style="min-height:50px;">
+        <!-- Thought messages -->
+      </div>
+    </div>
     <!-- Links to instructions or tutorial -->
     <h4 id="instructions" class="text-center"><a href="./instructions">Instructions</a></h4>
     <h4 id="tutorial" class="text-center"><a href="./tutorial">Tutorial</a></h4>
 
-    <!-- This div is used if a user tries to join a game that isn't ready yet -->
+    <!-- if a user tries to join a game that isn't ready yet -->
     <div id="waiting" class="text-center" style="display:none">
       Waiting for game to be created. Please be patient...
     </div>
 
-    <!-- This is the container that holds the Overcooked game once started -->
+    <!-- The container that holds the Overcooked game once started -->
     <div id="overcooked-container" class="text-center">
       <h4 id="game-title" style="display:none">Game in Progress</h4>
       <h4 id="game-over" style="display:none">Game Over</h4>

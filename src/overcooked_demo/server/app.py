@@ -512,7 +512,8 @@ def on_join(data):
                     )
                     layout_info = {
                     "layout_name":game.curr_layout, # name of layout e.g. cramped_room
-                    "terrain": game.mdp.terrain_mtx # 2d list of the terrain
+                    "terrain": game.mdp.terrain_mtx, # 2d list of the terrain
+                    "state": game.get_state()
                     }
                     socketio.emit("java_layout",layout_info, broadcast=True)
                     socketio.start_background_task(play_game, game)
@@ -586,6 +587,10 @@ def handle_java_connected(data):
     # Broadcast this event to ALL connected clients (including browsers)
     socketio.emit("java_connected", data, broadcast=True)
 
+@socketio.on("thought")
+def handle_java_connected(data):
+    # Broadcast this event to ALL connected clients (including browsers)
+    socketio.emit("thought", data, broadcast=True)
 
 @socketio.on("disconnect")
 def on_disconnect():
@@ -665,12 +670,14 @@ def play_game(game: OvercookedGame, fps=6):
             )
         # Send updates to the Java server side once per second
         now = time.time() # check the time now
-        if now - last_java_update >=1.0:
-            # At 1.0 second, lock the game to read the state safely
+        if now - last_java_update >= 0.2:
+            # At 0.2 second, lock the game to read the state safely
             with game.lock:
                 game_state = game.get_state()
             # Send the update and update the last time it has been sent so we can track it
+            terrain = game.mdp.terrain_mtx
             socketio.emit("java_state_update", game_state, broadcast=True)
+            socketio.emit("terrain_update", terrain, broadcast=True)
             last_java_update = now
         socketio.sleep(1 / fps)
 
