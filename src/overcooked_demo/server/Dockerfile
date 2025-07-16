@@ -1,4 +1,5 @@
-FROM python:3.7-buster 
+FROM python:3.9-bookworm
+
 
 ARG BUILD_ENV
 ARG OVERCOOKED_BRANCH
